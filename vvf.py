@@ -17,6 +17,13 @@ if st.button("🚑 RICHIEDI ASSISTENZA SANITARIA"):
     conn.execute('''INSERT INTO richieste_sanitarie (comune, indirizzo, scenario_vvf, stato) 
                     VALUES (?, ?, ?, ?)''', 
                  (intv['comune'], intv['indirizzo'], intv['tipologia'], 'PENDENTE'))
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS richieste_sanitarie 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                  comune TEXT, 
+                  indirizzo TEXT, 
+                  scenario_vvf TEXT, 
+                  stato TEXT)''')
     conn.commit()
     conn.close()
     st.toast("Richiesta inviata alla SOREU Alpina!")
