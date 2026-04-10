@@ -1,180 +1,185 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
-import folium
 import random
+import math
 import time
-from streamlit_folium import st_folium
-from streamlit_autorefresh import st_autorefresh
-from datetime import datetime, timedelta
+import sqlite3
+from datetime import datetime
 
-# REFRESH AUTOMATICO: Fondamentale per far "apparire" le missioni ogni 5 minuti
-st_autorefresh(interval=30000, key="global_refresh") 
-
-# Nel blocco "Operazioni Tecniche sul Posto" dell'app VVF
-if st.button("🚑 RICHIEDI ASSISTENZA SANITARIA"):
+# =========================================================
+# 1. DATABASE E INIZIALIZZAZIONE (ADATTATO VVF)
+# =========================================================
+def init_db_vvf():
+    # USIAMO LO STESSO DB DELLA SOREU PER PARLARCI
     conn = sqlite3.connect('centrale_unica.db')
-    conn.execute('''INSERT INTO richieste_sanitarie (comune, indirizzo, scenario_vvf, stato) 
-                    VALUES (?, ?, ?, ?)''', 
-                 (intv['comune'], intv['indirizzo'], intv['tipologia'], 'PENDENTE'))
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS richieste_sanitarie 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  comune TEXT, 
-                  indirizzo TEXT, 
-                  scenario_vvf TEXT, 
-                  stato TEXT)''')
-    conn.commit()
-    conn.close()
-    st.toast("Richiesta inviata alla SOREU Alpina!")
-
-# =========================================================
-# 1. DATABASE COMPLETO SEDI E MEZZI (BG-BS)
-# =========================================================
-def init_db_reale():
-    conn = sqlite3.connect('centrale_lombardia_est_v2.db')
     c = conn.cursor()
     
-    c.execute('''CREATE TABLE IF NOT EXISTS sedi_vvf (nome TEXT PRIMARY KEY, lat REAL, lon REAL, comando TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS mezzi_vvf (id TEXT PRIMARY KEY, tipo TEXT, sede TEXT, stato TEXT, ora_arrivo TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS interventi_vvf (id INTEGER PRIMARY KEY AUTOINCREMENT, tipologia TEXT, comune TEXT, indirizzo TEXT, stato TEXT, ora_inizio TEXT)''')
+    # Tabella Utenti (Gemella della SOREU)
+    c.execute('''CREATE TABLE IF NOT EXISTS utenti 
+                 (username TEXT PRIMARY KEY, password TEXT, cambio_obbligatorio INTEGER, ruolo TEXT)''')
+    
+    # TABELLA PONTE: Qui i VVF scrivono per chiedere aiuto alla SOREU
+    c.execute('''CREATE TABLE IF NOT EXISTS richieste_sanitarie 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, comune TEXT, indirizzo TEXT, scenario_vvf TEXT, stato TEXT)''')
 
-    # --- ELENCO SEDI REALI ---
-    sedi = [
-        ('Bergamo Centrale', 45.6891, 9.6631, 'Bergamo'),
-        ('Treviglio', 45.5268, 9.5912, 'Bergamo'),
-        ('Romano di Lombardia', 45.5133, 9.7544, 'Bergamo'),
-        ('Dalmine', 45.6483, 9.6033, 'Bergamo'),
-        ('Zogno', 45.7944, 9.6644, 'Bergamo'),
-        ('Clusone', 45.8822, 9.9490, 'Bergamo'),
-        ('Brescia Centrale', 45.5469, 10.2015, 'Brescia'),
-        ('Desenzano del Garda', 45.4744, 10.5333, 'Brescia'),
-        ('Chiari', 45.5385, 9.9288, 'Brescia'),
-        ('Darfo Boario Terme', 45.8856, 10.1833, 'Brescia'),
-        ('Orzinuovi', 45.4056, 9.9285, 'Brescia'),
-        ('Salò', 45.6074, 10.5231, 'Brescia')
-    ]
-    c.executemany("INSERT OR IGNORE INTO sedi_vvf VALUES (?,?,?,?)", sedi)
-
-    # --- PARCO MEZZI DETTAGLIATO (Esempio Reale) ---
-    if c.execute("SELECT COUNT(*) FROM mezzi_vvf").fetchone()[0] == 0:
-        mezzi = [
-            # BERGAMO
-            ('APS Bergamo 1', 'AutoPompa', 'Bergamo Centrale', 'In Sede', ''),
-            ('ABP Bergamo 1', 'AutoBotte', 'Bergamo Centrale', 'In Sede', ''),
-            ('AS Bergamo 1', 'AutoScala', 'Bergamo Centrale', 'In Sede', ''),
-            ('APS Treviglio 1', 'AutoPompa', 'Treviglio', 'In Sede', ''),
-            ('ABP Treviglio 1', 'AutoBotte', 'Treviglio', 'In Sede', ''),
-            ('AS Treviglio 1', 'AutoScala', 'Treviglio', 'In Sede', ''),
-            ('AIB Treviglio (Boschivo)', 'Boschivo', 'Treviglio', 'In Sede', ''),
-            ('APS Romano 1', 'AutoPompa', 'Romano di Lombardia', 'In Sede', ''),
-            ('ABP Romano 1', 'AutoBotte', 'Romano di Lombardia', 'In Sede', ''),
-            # BRESCIA
-            ('APS Brescia 1', 'AutoPompa', 'Brescia Centrale', 'In Sede', ''),
-            ('ABP Brescia 1', 'AutoBotte', 'Brescia Centrale', 'In Sede', ''),
-            ('AS Brescia 1', 'AutoScala', 'Brescia Centrale', 'In Sede', ''),
-            ('AG Brescia 1', 'AutoGru', 'Brescia Centrale', 'In Sede', ''),
-            ('APS Chiari 1', 'AutoPompa', 'Chiari', 'In Sede', ''),
-            ('APS Darfo 1', 'AutoPompa', 'Darfo Boario Terme', 'In Sede', '')
-        ]
-        c.executemany("INSERT OR IGNORE INTO mezzi_vvf VALUES (?,?,?,?,?)", mezzi)
+    c.execute("SELECT COUNT(*) FROM utenti")
+    if c.fetchone()[0] == 0:
+        utenti_iniziali = [('admin', 'admin', 0, 'Admin'), ('vvf.bergamo', 'vvf', 1, 'Operatore')]
+        c.executemany("INSERT INTO utenti VALUES (?,?,?,?)", utenti_iniziali)
     
     conn.commit()
     conn.close()
 
-# =========================================================
-# 2. MOTORE DI AUTOMAZIONE (MISSIONI OGNI 5 MIN)
-# =========================================================
-def logica_automazione():
-    # Gestione Timer per Missioni (ogni 5 minuti = 300 secondi)
-    if "next_mission_time" not in st.session_state:
-        st.session_state.next_mission_time = time.time() + 100
+def get_utente_db(username):
+    conn = sqlite3.connect('centrale_unica.db')
+    c = conn.cursor()
+    c.execute("SELECT username, password, cambio_obbligatorio, ruolo FROM utenti WHERE username=?", (username,))
+    res = c.fetchone()
+    conn.close()
+    return res
 
-    if time.time() >= st.session_state.next_mission_time:
-        tipi = ["Incendio Civile", "Incendio Boschivo", "Incidente Stradale", "Soccorso Persona", "Fuga Gas"]
-        comuni = ["Treviglio", "Bergamo", "Brescia", "Chiari", "Romano di Lombardia", "Dalmine", "Desenzano"]
+init_db_vvf()
+
+# =========================================================
+# 2. CONFIGURAZIONE E SESSIONE
+# =========================================================
+st.set_page_config(page_title="Comando Provinciale VVF - 115", layout="wide")
+
+if 'utente_connesso' not in st.session_state: st.session_state.utente_connesso = None
+if 'ruolo' not in st.session_state: st.session_state.ruolo = None
+if 'fase_cambio_pw' not in st.session_state: st.session_state.fase_cambio_pw = False
+
+# --- LOGICA LOGIN (IDENTICA ALLA TUA SOREU) ---
+if st.session_state.utente_connesso is None:
+    st.title("👨‍🚒 Comando Provinciale VVF - Login")
+    u_in = st.text_input("Username").lower().strip()
+    p_in = st.text_input("Password", type="password")
+    if st.button("ACCEDI AL COMANDO", type="primary"):
+        user_data = get_utente_db(u_in)
+        if user_data and user_data[1] == p_in:
+            st.session_state.utente_connesso = u_in
+            st.session_state.ruolo = user_data[3]
+            st.rerun()
+        else: st.error("Accesso negato.")
+    st.stop()
+
+# =========================================================
+# 3. DATABASE MEZZI VVF (BG + BS)
+# =========================================================
+if 'database_mezzi_vvf' not in st.session_state:
+    st.session_state.database_mezzi_vvf = {
+        # DISTACCAMENTI BERGAMO
+        "APS Bergamo 1": {"stato": "In Sede", "tipo": "APS", "sede": "Bergamo Centrale", "lat": 45.6891, "lon": 9.6631},
+        "AS Bergamo 1": {"stato": "In Sede", "tipo": "AS", "sede": "Bergamo Centrale", "lat": 45.6891, "lon": 9.6631},
+        "APS Treviglio 1": {"stato": "In Sede", "tipo": "APS", "sede": "Treviglio", "lat": 45.5268, "lon": 9.5912},
+        "ABP Treviglio 1": {"stato": "In Sede", "tipo": "ABP", "sede": "Treviglio", "lat": 45.5268, "lon": 9.5912},
+        "BOSCHIVO Treviglio": {"stato": "In Sede", "tipo": "AIB", "sede": "Treviglio", "lat": 45.5268, "lon": 9.5912},
+        "APS Romano 1": {"stato": "In Sede", "tipo": "APS", "sede": "Romano di L.", "lat": 45.5133, "lon": 9.7544},
         
-        t = random.choice(tipi)
-        c_name = random.choice(comuni)
-        ora = datetime.now().strftime("%H:%M")
-        
-        conn = sqlite3.connect('centrale_lombardia_est_v2.db')
-        conn.execute("INSERT INTO interventi_vvf (tipologia, comune, indirizzo, stato, ora_inizio) VALUES (?,?,?,?,?)",
-                     (t, c_name, "Coordinate in attesa", "APERTO", ora))
-        conn.commit()
-        conn.close()
-        
-        # Reset timer per la prossima missione tra 5 minuti
-        st.session_state.next_mission_time = time.time() + 300
-        st.toast(f"🚨 NUOVA CHIAMATA: {t} a {c_name}!")
+        # DISTACCAMENTI BRESCIA
+        "APS Brescia 1": {"stato": "In Sede", "tipo": "APS", "sede": "Brescia Centrale", "lat": 45.5469, "lon": 10.2015},
+        "ABP Brescia 1": {"stato": "In Sede", "tipo": "ABP", "sede": "Brescia Centrale", "lat": 45.5469, "lon": 10.2015},
+        "APS Chiari 1": {"stato": "In Sede", "tipo": "APS", "sede": "Chiari", "lat": 45.5385, "lon": 9.9288},
+    }
+
+scenari_vvf = [
+    {"titolo": "Incendio Civile", "mezzi_req": ["APS", "AS"], "priorità": "Alta"},
+    {"titolo": "Incidente Stradale", "mezzi_req": ["APS"], "priorità": "Alta"},
+    {"titolo": "Incendio Boschivo", "mezzi_req": ["APS", "AIB"], "priorità": "Urgente"},
+    {"titolo": "Apertura Porta", "mezzi_req": ["APS"], "priorità": "Media"},
+    {"titolo": "Allagamento", "mezzi_req": ["APS"], "priorità": "Bassa"}
+]
 
 # =========================================================
-# 3. INTERFACCIA PRINCIPALE
+# 4. INTERFACCIA CENTRALE VVF
 # =========================================================
-init_db_reale()
-logica_automazione()
+st.sidebar.title("📟 Sala Operativa 115")
+st.sidebar.write(f"Operatore: {st.session_state.utente_connesso.upper()}")
 
-st.set_page_config(layout="wide", page_title="SO 115 BG-BS")
-st.title("🖥️ Sala Operativa 115 - Bergamo & Brescia")
+# Inizializzazione variabili sessione se non presenti
+if 'missioni_vvf_attive' not in st.session_state: st.session_state.missioni_vvf_attive = {}
+if 'evento_vvf_corrente' not in st.session_state: st.session_state.evento_vvf_corrente = None
 
-# --- MAPPA INTERATTIVA ---
-conn = sqlite3.connect('centrale_lombardia_est_v2.db')
-df_sedi = pd.read_sql_query("SELECT * FROM sedi_vvf", conn)
-df_mezzi = pd.read_sql_query("SELECT * FROM mezzi_vvf", conn)
-interventi_attivi = pd.read_sql_query("SELECT * FROM interventi_vvf WHERE stato='APERTO'", conn)
-conn.close()
+# Timer per missione automatica (Ogni 5 minuti)
+if 'next_vvf_mission' not in st.session_state: st.session_state.next_vvf_mission = time.time() + 300
 
-m = folium.Map(location=[45.6, 9.9], zoom_start=9, tiles="cartodbpositron")
-for _, s in df_sedi.iterrows():
-    m_disponibili = df_mezzi[(df_mezzi['sede'] == s['nome']) & (df_mezzi['stato'] == 'In Sede')].shape[0]
-    color = "green" if m_disponibili > 0 else "red"
-    folium.Marker([s['lat'], s['lon']], popup=s['nome'], tooltip=f"{s['nome']} (Disp: {m_disponibili})", icon=folium.Icon(color=color, icon='fire', prefix='fa')).add_to(m)
+# Controllo se è ora di una nuova missione
+if time.time() > st.session_state.next_vvf_mission:
+    sce_auto = random.choice(scenari_vvf)
+    st.session_state.evento_vvf_corrente = {
+        "tipo": sce_auto["titolo"],
+        "comune": random.choice(["Bergamo", "Brescia", "Treviglio", "Dalmine"]),
+        "indirizzo": "Verifica in corso...",
+        "lat": 45.6, "lon": 9.7 # Coordinata approssimativa
+    }
+    st.session_state.next_vvf_mission = time.time() + 300
+    st.toast("🚨 NUOVA CHIAMATA 115!")
 
-st_folium(m, width="100%", height=400)
+# --- LAYOUT PRINCIPALE ---
+tab1, tab2 = st.tabs(["📝 Gestione Interventi", "🚒 Stato Colonne Mobili"])
 
-# --- GESTIONE INTERVENTI (IN AUTOMATICO E MANUALE) ---
-st.divider()
-col_sx, col_dx = st.columns([2, 1])
+with tab1:
+    col_inf, col_map = st.columns([1, 1.5])
+    
+    with col_inf:
+        st.subheader("📋 Scheda Intervento")
+        if st.button("🔔 Genera Intervento Manuale"):
+            sce = random.choice(scenari_vvf)
+            st.session_state.evento_vvf_corrente = {
+                "tipo": sce["titolo"], "comune": "Treviglio", "indirizzo": "Via Roma", "lat": 45.52, "lon": 9.59
+            }
+            st.rerun()
 
-with col_sx:
-    st.subheader("🚨 Emergenze in Attesa")
-    if interventi_attivi.empty:
-        st.info("Monitoraggio sistema attivo. Prossima scansione 112 in corso...")
-    else:
-        for _, intv in interventi_attivi.iterrows():
+        if st.session_state.evento_vvf_corrente:
+            ev = st.session_state.evento_vvf_corrente
             with st.container(border=True):
-                c1, c2 = st.columns([3, 1])
-                with c1:
-                    st.error(f"**{intv['tipologia'].upper()}** - {intv['comune']}")
-                    st.caption(f"Ricevuta h: {intv['ora_inizio']}")
-                with c2:
-                    # Filtra mezzi per comando (se intervento è a BG, suggerisce mezzi BG)
-                    invia_da = st.selectbox("Invia da:", df_sedi['nome'].tolist(), key=f"sede_{intv['id']}")
-                    disp = df_mezzi[(df_mezzi['sede'] == invia_da) & (df_mezzi['stato'] == 'In Sede')]['id'].tolist()
-                    scelta = st.multiselect("Mezzi:", disp, key=f"m_{intv['id']}")
-                    if st.button("🚀 PARTENZA", key=f"go_{intv['id']}"):
-                        if scelta:
-                            conn = sqlite3.connect('centrale_lombardia_est_v2.db')
-                            for mid in scelta:
-                                conn.execute("UPDATE mezzi_vvf SET stato='In Intervento' WHERE id=?", (mid,))
-                            conn.execute("UPDATE interventi_vvf SET stato='GESTITO' WHERE id=?", (intv['id'],))
-                            conn.commit()
-                            conn.close()
-                            st.rerun()
+                st.error(f"⚠️ {ev['tipo'].upper()}")
+                st.write(f"📍 {ev['comune']} - {ev['indirizzo']}")
+                
+                # Selezione mezzi
+                m_disp = [k for k, v in st.session_state.database_mezzi_vvf.items() if v['stato'] == "In Sede"]
+                scelti = st.multiselect("Seleziona Mezzi da Allarmare:", m_disp)
+                
+                if st.button("🚀 ALLARMA SQUADRE"):
+                    for m in scelti:
+                        st.session_state.database_mezzi_vvf[m]['stato'] = "In Intervento"
+                        st.session_state.mission_id = random.randint(1000, 9999)
+                    st.session_state.missioni_vvf_attive[st.session_state.mission_id] = ev
+                    st.session_state.evento_vvf_corrente = None
+                    st.rerun()
+        else:
+            st.info("Nessuna emergenza pendente.")
 
-with col_dx:
-    st.subheader("🚒 Stato Sedi")
-    for _, s in df_sedi.iterrows():
-        m_s = df_mezzi[df_mezzi['sede'] == s['nome']]
-        in_sede = m_s[m_s['stato'] == 'In Sede'].shape[0]
-        st.write(f"**{s['nome']}**: {in_sede}/{m_s.shape[0]} pronti")
-        if st.checkbox("Vedi Mezzi", key=f"check_{s['nome']}"):
-            for _, mz in m_s.iterrows():
-                ico = "🟢" if mz['stato'] == "In Sede" else "🔴"
-                st.write(f"{ico} {mz['id']} ({mz['tipo']})")
-                if mz['stato'] != "In Sede":
-                    if st.button(f"Rientro {mz['id']}", key=f"rie_{mz['id']}"):
-                        conn = sqlite3.connect('centrale_lombardia_est_v2.db')
-                        conn.execute("UPDATE mezzi_vvf SET stato='In Sede' WHERE id=?", (mz['id'],))
-                        conn.commit()
-                        st.rerun()
+    with col_map:
+        st.subheader("🗺️ Mappa Mezzi")
+        df_map = pd.DataFrame([{"lat": v["lat"], "lon": v["lon"]} for v in st.session_state.database_mezzi_vvf.values()])
+        st.map(df_map)
+
+st.divider()
+
+# =========================================================
+# 5. IL PONTE CON LA SOREU
+# =========================================================
+st.subheader("🚑 Collegamento SOREU Alpina")
+if st.session_state.missioni_vvf_attive:
+    for mid, info in st.session_state.missioni_vvf_attive.items():
+        with st.expander(f"Intervento #{mid} - {info['tipo']} a {info['comune']}"):
+            st.write("Squadre operanti sul posto. Necessaria assistenza sanitaria?")
+            
+            # TASTO MAGICO: Scrive nel DB della SOREU
+            if st.button(f"🚑 RICHIEDI AMBULANZA PER INTERVENTO #{mid}", key=f"req_{mid}"):
+                conn = sqlite3.connect('centrale_unica.db')
+                conn.execute("INSERT INTO richieste_sanitarie (comune, indirizzo, scenario_vvf, stato) VALUES (?,?,?,?)",
+                             (info['comune'], info['indirizzo'], info['tipo'], 'PENDENTE'))
+                conn.commit()
+                conn.close()
+                st.success("Richiesta inviata in SOREU Alpina!")
+
+# Gestione Rientro Mezzi
+st.sidebar.divider()
+st.sidebar.subheader("Fine Intervento")
+for m_nome, m_dati in st.session_state.database_mezzi_vvf.items():
+    if m_dati['stato'] != "In Sede":
+        if st.sidebar.button(f"🔙 Rientro {m_nome}"):
+            st.session_state.database_mezzi_vvf[m_nome]['stato'] = "In Sede"
+            st.rerun()
