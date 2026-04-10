@@ -11,6 +11,16 @@ from datetime import datetime, timedelta
 # REFRESH AUTOMATICO: Fondamentale per far "apparire" le missioni ogni 5 minuti
 st_autorefresh(interval=30000, key="global_refresh") 
 
+# Nel blocco "Operazioni Tecniche sul Posto" dell'app VVF
+if st.button("🚑 RICHIEDI ASSISTENZA SANITARIA"):
+    conn = sqlite3.connect('centrale_unica.db')
+    conn.execute('''INSERT INTO richieste_sanitarie (comune, indirizzo, scenario_vvf, stato) 
+                    VALUES (?, ?, ?, ?)''', 
+                 (intv['comune'], intv['indirizzo'], intv['tipologia'], 'PENDENTE'))
+    conn.commit()
+    conn.close()
+    st.toast("Richiesta inviata alla SOREU Alpina!")
+
 # =========================================================
 # 1. DATABASE COMPLETO SEDI E MEZZI (BG-BS)
 # =========================================================
