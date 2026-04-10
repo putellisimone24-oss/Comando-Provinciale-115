@@ -71,7 +71,7 @@ def init_db_reale():
 def logica_automazione():
     # Gestione Timer per Missioni (ogni 5 minuti = 300 secondi)
     if "next_mission_time" not in st.session_state:
-        st.session_state.next_mission_time = time.time() + 300
+        st.session_state.next_mission_time = time.time() + 100
 
     if time.time() >= st.session_state.next_mission_time:
         tipi = ["Incendio Civile", "Incendio Boschivo", "Incidente Stradale", "Soccorso Persona", "Fuga Gas"]
