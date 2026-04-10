@@ -178,8 +178,8 @@ if st.button("🚑 INVIA RICHIESTA A SOREU"):
 from pymilvus import MilvusClient
 
 # Sostituisci con i tuoi dati reali di Zilliz
-ZILLIZ_URI = "db_c0c7c2467e80acb" 
-ZILLIZ_TOKEN = "Kc1+UrW?+{Lsm5~r"
+ZILLIZ_URI = "https://in03-c0c7c2467e80acb.serverless.aws-eu-central-1.cloud.zilliz.com" 
+ZILLIZ_TOKEN = "bfe6a9e62b37468484ab4481ef5d061448733ee5007d3a8db97579d86c5f128459d008778e621b1ef6685860847ab1b2f9d482dc"
 
 client = MilvusClient(uri=ZILLIZ_URI, token=ZILLIZ_TOKEN)
 
