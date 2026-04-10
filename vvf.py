@@ -160,20 +160,39 @@ st.divider()
 # =========================================================
 # 5. IL PONTE CON LA SOREU
 # =========================================================
-st.subheader("🚑 Collegamento SOREU Alpina")
-if st.session_state.missioni_vvf_attive:
-    for mid, info in st.session_state.missioni_vvf_attive.items():
-        with st.expander(f"Intervento #{mid} - {info['tipo']} a {info['comune']}"):
-            st.write("Squadre operanti sul posto. Necessaria assistenza sanitaria?")
-            
-            # TASTO MAGICO: Scrive nel DB della SOREU
-            if st.button(f"🚑 RICHIEDI AMBULANZA PER INTERVENTO #{mid}", key=f"req_{mid}"):
-                conn = sqlite3.connect('centrale_unica.db')
-                conn.execute("INSERT INTO richieste_sanitarie (comune, indirizzo, scenario_vvf, stato) VALUES (?,?,?,?)",
-                             (info['comune'], info['indirizzo'], info['tipo'], 'PENDENTE'))
-                conn.commit()
-                conn.close()
-                st.success("Richiesta inviata in SOREU Alpina!")
+
+if st.button("🚑 INVIA RICHIESTA A SOREU"):
+    data = [
+        {
+            "vector": [0.1, 0.1], # Valore finto richiesto da Zilliz
+            "comune": "Treviglio",
+            "indirizzo": "Via Roma 10",
+            "scenario": "Incendio Civile",
+            "stato": "PENDENTE"
+        }
+    ]
+    client.insert(collection_name="richieste_vvf_soreu", data=data)
+    st.success("Inviato a Zilliz Cloud!")
+    
+
+from pymilvus import MilvusClient
+
+# Sostituisci con i tuoi dati reali di Zilliz
+ZILLIZ_URI = "db_c0c7c2467e80acb" 
+ZILLIZ_TOKEN = "Kc1+UrW?+{Lsm5~r"
+
+client = MilvusClient(uri=ZILLIZ_URI, token=ZILLIZ_TOKEN)
+
+# Creazione della collezione (se non esiste)
+def init_zilliz_ponte():
+    if not client.has_collection("richieste_vvf_soreu"):
+        client.create_collection(
+            collection_name="richieste_vvf_soreu",
+            dimension=2, # Non useremo i vettori, ma serve un valore minimo
+            primary_field_name="id",
+            id_type="int",
+            auto_id=True
+        )
 
 # Gestione Rientro Mezzi
 st.sidebar.divider()
